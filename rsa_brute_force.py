@@ -1,0 +1,22 @@
+from time import time
+
+from numpy import gcd
+
+N = 19391 * 11939
+
+
+def classical_brute_force(N):
+    for a in range(2, N):
+        if gcd(a, N) != 1:
+            return a, N // a
+
+
+if __name__ == "__main__":
+    print("Algorithme classique de brute force")
+    start = time()
+    factors = classical_brute_force(N)
+    end = time()
+    print(
+        f"Les facteurs premiers de {N} sont {factors} : trouve en {end - start} secondes"
+    )
+    print("-" * 50)

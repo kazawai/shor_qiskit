@@ -1,8 +1,9 @@
-from qiskit import QuantumCircuit, transpile
+from qiskit import (ClassicalRegister, QuantumCircuit, QuantumRegister,
+                    transpile)
 from qiskit_aer import AerSimulator
 
 # Define the quantum circuit
-qc = QuantumCircuit(1, 1)
+qc = QuantumCircuit(QuantumRegister(1), ClassicalRegister(1))
 
 # Append the X operator
 qc.x(0)

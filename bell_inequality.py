@@ -1,4 +1,4 @@
-from numpy import random
+from numpy import pi, random
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 from qiskit_aer import AerSimulator
 
@@ -16,10 +16,15 @@ def bell_state():
 
 
 def algorithm(value1, value2, circuit):
-    if value1:
-        circuit.x(0)
-    if value2:
-        circuit.x(1)
+    theta1, theta2 = 0, pi / 8
+    if value1 == 1:
+        theta1 = pi / 4
+    if value2 == 1:
+        theta2 = -theta2
+
+    circuit.ry(theta1, 0)
+    circuit.ry(theta2, 1)
+
     return circuit
 
 

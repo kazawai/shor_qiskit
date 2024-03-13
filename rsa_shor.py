@@ -80,7 +80,6 @@ def qft(
         for k in range(j - 1, -1, -1):
             if (pi / float(2 ** (j - k))) > 0:
                 circuit.cp(pi / float(2 ** (j - k)), qreg[j], qreg[k])
-                k -= 1
         if with_swaps:
             circuit.barrier()
 

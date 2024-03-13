@@ -3,11 +3,13 @@ RSA and Shor's algorithm.
 Based on past Qiskit implementation : https://github.com/ttlion/ShorAlgQiskit/blob/master/Shor_Normal_QFT.py
 """
 
+import array
+import fractions
 import traceback
 # Time the execution of the algorithm
 from time import time
 
-from numpy import ceil, gcd, log2, pi, zeros
+from numpy import ceil, floor, gcd, log2, pi, zeros
 from numpy.random import randint, seed
 # For shor's algorithm in qiskit version 1.0.1
 from qiskit import (ClassicalRegister, QuantumCircuit, QuantumRegister,
@@ -303,27 +305,20 @@ def controlled_mult_mod_N(
     qft_dagger(circuit, ancilla_reg, n + 1, False)
 
 
-def check_power(N):
-    """Check if N is a perfect power"""
-    for i in range(2, N):
-        if N % i == 0:
-            if N % i**2 == 0:
-                print(f"{N} is a perfect power")
-                return i
-            else:
-                print(f"{N} is not a perfect power")
-                break
+def find_factors_prime_power(N):
+    """Check if N is a perfect power and return the factors"""
+    for k in range(2, int(floor(log2(N))) + 1):
+        c = pow(N, 1 / k)
+        c1 = floor(c)
+        if c1**k == N:
+            return c1
+        c2 = ceil(c)
+        if c2**k == N:
+            return c2
+    return None
 
 
-def get_coprime(N):
-    """Get a random coprime of N"""
-    a = randint(2, N)
-    while gcd(a, N) != 1:
-        a = randint(2, N)
-    return a
-
-
-def qpe_period_finding(N, a, n) -> float | str:
+def qpe_period_finding(N, a, n) -> int | str:
     """Quantum Phase Estimation for period finding"""
     q_up = QuantumRegister(2 * n, "q_up")
     q_down = QuantumRegister(n, "q_down")
@@ -351,15 +346,17 @@ def qpe_period_finding(N, a, n) -> float | str:
         transpiled_qpe = transpile(qpe, AerSimulator())
 
         # Simulate the QuantumCircuit
-        result = AerSimulator().run(transpiled_qpe).result()
-        counts = result.get_counts(qpe)
-        print(counts)
+        result = AerSimulator().run(transpiled_qpe, shots=1024, memory=True).result()
+        mem = result.get_memory()
 
         # Extract the phase
-        phase = max(counts, key=counts.get)
-        phase = int(phase, 2) / 2**n
+        phase = int(mem[0], 2) / (2 ** (2 * n))
 
-        return phase
+        # Find the period
+        r = fractions.Fraction(phase).limit_denominator(N - 1).denominator
+
+        return r
+
     except Exception as e:
         print(traceback.format_exc())
         # print(qpe.draw())
@@ -369,35 +366,38 @@ def qpe_period_finding(N, a, n) -> float | str:
 def shor(N):
     """Shor's algorithm"""
     # Check if N is a perfect power
-    r = check_power(N)
-    if r:
+    r = find_factors_prime_power(N)
+    if r is not None:
         return r, N // r
 
     # Get a random coprime of N
-    a = get_coprime(N)
+    a = randint(2, N)
+    if gcd(a, N) != 1:
+        print(f"Lucky guess: {gcd(a, N)} is a factor of {N}")
+        return (gcd(a, N), N // gcd(a, N))
     print(f"The coprime of {N} is {a}")
-
-    # Check if a is a non-trivial square root of 1
-    if pow(a, N // 2, N) == (N - 1):
-        return gcd(a + 1, N), gcd(a - 1, N)
 
     # Find the period
     n = int(ceil(log2(N)))
-    phase = qpe_period_finding(N, a, n)
 
-    print(f"The phase is {phase}")
-
-    # Check if the period is even
-    if isinstance(phase, float) and phase % 1 == 0:
-        if phase % 2 == 0:
-            x = int(pow(a, phase / 2))
-            if (x + 1) % N != 0:
-                # TODO : The factors oftentimes are 1 and N, which is not correct. Check the implementation
-                factors = gcd(x + 1, N), gcd(x - 1, N)
-                return factors
-
-    print("Failure, trying again")
-    return shor(N)
+    # Thanks Qiskit for the following code (source : https://github.com/Qiskit/textbook/blob/main/notebooks/ch-algorithms/shor.ipynb)
+    FACTOR_FOUND = False
+    ATTEMPT = 0
+    while not FACTOR_FOUND:
+        ATTEMPT += 1
+        print(f"\nATTEMPT {ATTEMPT}:")
+        r = qpe_period_finding(N, a, n)
+        print(f"Result: r = {r}")
+        if r != 0:
+            # Guesses for factors are gcd(x^{r/2} ±1 , 15)
+            guesses = [gcd(a ** (r // 2) - 1, N), gcd(a ** (r // 2) + 1, N)]
+            print(f"Guessed Factors: {guesses[0]} and {guesses[1]}")
+            for guess in guesses:
+                if guess not in [1, N] and (N % guess) == 0:
+                    # Guess is a factor!
+                    print(f"*** Non-trivial factor found: {guess} ***")
+                    FACTOR_FOUND = True
+                    return guess, N // guess
 
 
 if __name__ == "__main__":

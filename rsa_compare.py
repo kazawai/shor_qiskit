@@ -22,8 +22,8 @@ for value in values:
     c_times.append(end - start)
 
 # Plot the results in a graph with same scale on the y-axis
-plt.plot(values, times, label="Quantum")
-plt.plot(values, c_times, label="Classical")
+plt.scatter(values, times, label="Quantum")
+plt.scatter(values, c_times, label="Classical")
 plt.xlabel("Value of N")
 plt.ylabel("Time (s)")
 plt.legend()

@@ -1,10 +1,17 @@
+"""
+RSA and Shor's algorithm.
+Based on past Qiskit implementation : https://github.com/ttlion/ShorAlgQiskit/blob/master/Shor_Normal_QFT.py
+"""
+
+import traceback
 # Time the execution of the algorithm
 from time import time
 
-from numpy import gcd, pi
-from numpy.random import seed
+from numpy import gcd, pi, zeros
+from numpy.random import randint, seed
 # For shor's algorithm in qiskit version 1.0.1
-from qiskit import QuantumCircuit, transpile
+from qiskit import (ClassicalRegister, QuantumCircuit, QuantumRegister,
+                    transpile)
 from qiskit_aer import AerSimulator
 
 
@@ -24,7 +31,8 @@ def rsa(P, Q):
 # Define message
 message = "HELLO"
 # Generate the public and private keys
-public_key, private_key = rsa(19391, 11939)
+# public_key, private_key = rsa(19391, 11939)
+public_key, private_key = rsa(17, 11)
 
 
 def rsa_encrypt(message, public_key):
@@ -61,114 +69,313 @@ print("-" * 50)
 ####################
 
 
-def c_amod15(a, power):
-    """Controlled multiplication by a mod 15"""
-    if a not in [2, 7, 8, 11, 13]:
-        raise ValueError("'a' must be 2,7,8,11, or 13")
-    U = QuantumCircuit(4)
-    for _ in range(power):
-        if a in [2, 13]:
-            U.swap(0, 1)
-            U.swap(1, 2)
-            U.swap(2, 3)
-        if a in [7, 8]:
-            U.swap(2, 3)
-            U.swap(1, 2)
-            U.swap(0, 1)
-        if a == 11:
-            U.swap(1, 3)
-            U.swap(0, 2)
-        if a in [7, 11, 13]:
-            for q in range(4):
-                U.x(q)
-    U = U.to_gate()
-    U.name = "%i^%i mod 15" % (a, power)
-    c_U = U.control()
-    return c_U
-
-
-def qft_dagger(n):
-    """n-qubit QFTdagger the first n qubits"""
-    qc = QuantumCircuit(n)
-    for qubit in range(n // 2):
-        qc.swap(qubit, n - 1 - qubit)
+def qft(
+    circuit: QuantumCircuit, qreg: QuantumRegister, n: int, with_swaps: bool = True
+):
+    """n-qubit QFT on q in circ."""
     for j in range(n):
-        for m in range(j):
-            qc.cp(-pi / float(2 ** (j - m)), m, j)
-        qc.h(j)
-    qc.name = "QFT†"
-    return qc
+        circuit.h(qreg[n - j - 1])
+        for k in range(n - j - 1):
+            circuit.cp(pi / float(2 ** (n - j - 1 - k)), qreg[k], qreg[n - j - 1])
+        if with_swaps:
+            circuit.barrier()
+
+    if with_swaps:
+        for j in range(n // 2):
+            circuit.swap(qreg[j], qreg[n - j - 1])
+    return circuit
 
 
-def qpe_period_finding():
-    """Estimate the period of the function a^x mod 15"""
-    a = 7
-    n_count = 8
-    qc = QuantumCircuit(4 + n_count, n_count)
+def qft_dagger(
+    circuit: QuantumCircuit, qreg: QuantumRegister, n: int, with_swaps: bool = True
+):
+    """n-qubit QFTdagger on q in circ."""
+    if with_swaps:
+        for j in range(n // 2):
+            circuit.swap(qreg[j], qreg[n - j - 1])
 
-    # Apply Hadamard gates
-    for q in range(n_count):
-        qc.h(q)  # Initialize counting qubits in state |+>
-
-    qc.x(3 + n_count)  # And auxiliary register in state |1>
-    # Apply controlled-U operations
-    for q in range(n_count):  # Do controlled-U operations
-        qc.append(c_amod15(a, 2**q), [q] + [i + 4 for i in range(n_count)])
-
-    # Apply the inverse-QFT
-    qc.append(qft_dagger(n_count), range(n_count))
-    qc.measure(range(n_count), range(n_count))
-
-    aer_sim = AerSimulator()
-
-    t_qc = transpile(qc, aer_sim)
-    qobj = aer_sim.run(t_qc).result()
-
-    counts = qobj.get_counts()
-    return counts
+    for j in range(n):
+        for k in range(j + 1, n):
+            circuit.cp(-pi / float(2 ** (k - j)), qreg[k], qreg[j])
+        circuit.h(qreg[j])
+        if with_swaps:
+            circuit.barrier()
+    return circuit
 
 
-def denominator(r: float):
-    return 1 / r - int(1 / r)
+def get_angles(a, N):
+    """Compute the angles for the QPE"""
+    s = bin(int(a))[2:].zfill(N)
+    angles = zeros([N])
+    for i in range(0, N):
+        for j in range(i, N):
+            if s[j] == "1":
+                angles[N - i - 1] += pow(2, -(j - i))
+        angles[N - i - 1] *= pi
+    return angles
 
 
-# Define the Shor's algorithm function
-def shor(N):
-    """Shor's Algorithm"""
-    if N % 2 == 0:
-        return 2, N // 2
+def cc_phase_gate(
+    circuit: QuantumCircuit,
+    control_qubits: list[QuantumRegister],
+    target_qubit: int,
+    angle: float,
+):
+    """Create a doubly controlled phase gate"""
+    circuit.cp(angle / 2, control_qubits[0], target_qubit)
+    circuit.cx(control_qubits[1], control_qubits[0])
+    circuit.cp(-angle / 2, control_qubits[0], target_qubit)
+    circuit.cx(control_qubits[1], control_qubits[0])
+    circuit.cp(angle / 2, control_qubits[1], target_qubit)
 
-    # Check if N is a perfect power
-    for a in range(2, N):
-        if N % a == 0:
-            if pow(a, N - 1, N) == 1:
-                continue
-            else:
-                return a, N // a
-    # Call the quantum part of the algorithm
-    counts = qpe_period_finding()
 
-    # Process the results
-    for measured_value in counts:
-        print(f"Measured {int(measured_value, 2)}")
-        phase = int(measured_value, 2) / (2**8)
-        frac = phase - int(phase)
-        print(f"Phase {phase} = {frac} (mod 1)")
-        if frac < 0.5:
-            r = frac
+def phi_adder(
+    circuit: QuantumCircuit,
+    qreg: QuantumRegister,
+    a: int,
+    N: int,
+    inverse: bool = False,
+):
+    """Create the circuit that performs the addition by a in the Fourier space (mod N)"""
+    angles = get_angles(a, N)
+    for i in range(N):
+        if len(angles) == 0:
+            break
+        if not inverse:
+            circuit.p(angles[i], qreg[i])
         else:
-            r = frac - 1
-        print(f"Closest fraction {r}")
+            circuit.p(-angles[i], qreg[i])
 
-        # Check if the period is even
-        if denominator(r) % 2 == 0:
-            print(f"Period {r}")
-            x = a ** (denominator(r) // 2)
-            print(f"x = {a}^{denominator(r)//2} = {x} (mod {N})")
-            if (x + 1) % N != 0:
-                print(f"Non-trivial factor {gcd(x + 1, N)}")
-                return gcd(x + 1, N), gcd(x - 1, N)
-    return None
+
+def controlled_phi_adder(
+    circuit: QuantumCircuit,
+    qreg: QuantumRegister,
+    a: int,
+    N: int,
+    control_qubits: list[QuantumRegister] | QuantumRegister,
+    inverse: bool = False,
+):
+    """Controlled version of the phi_adder"""
+    angles = get_angles(a, N)
+    for i in range(N):
+        if len(angles) == 0:
+            break
+        if not inverse:
+            if isinstance(control_qubits, QuantumRegister) or len(control_qubits) == 1:
+                # Here, an error occurs when the control qubit and the target qubit are the same...
+                try:
+                    if control_qubits[0] != qreg[i]:
+                        circuit.cp(
+                            angles[i],
+                            (
+                                control_qubits
+                                if isinstance(control_qubits, QuantumRegister)
+                                else control_qubits[0]
+                            ),
+                            qreg[i],
+                        )
+                except Exception as e:
+                    print(traceback.format_exc())
+                    print(f"Control qubits: {control_qubits}")
+                    print(f"Target qubit: {qreg[i]}")
+                    print(f"Angle: {angles[i]}")
+                    raise e
+
+            else:
+                cc_phase_gate(circuit, control_qubits, qreg[i], angles[i])
+        else:
+            if isinstance(control_qubits, QuantumRegister) or len(control_qubits) == 1:
+                if control_qubits[0] != qreg[i]:
+                    circuit.cp(
+                        -angles[i],
+                        (
+                            control_qubits
+                            if isinstance(control_qubits, QuantumRegister)
+                            else control_qubits[0]
+                        ),
+                        qreg[i],
+                    )
+            else:
+                cc_phase_gate(circuit, control_qubits, qreg[i], -angles[i])
+
+
+def controlled_phi_adder_mod_N(
+    circuit: QuantumCircuit,
+    qreg: QuantumRegister,
+    a: int,
+    N: int,
+    n: int,
+    control_qubits: list[QuantumRegister] | QuantumRegister,
+    ancilla_qubits: QuantumRegister,
+):
+    """Controlled version of the phi_adder"""
+    controlled_phi_adder(circuit, qreg, a, n, control_qubits, False)
+    phi_adder(circuit, qreg, N, n, True)
+    qft_dagger(circuit, qreg, n, False)
+    circuit.cx(qreg[n - 1], ancilla_qubits[0])
+    qft(circuit, qreg, n, False)
+    controlled_phi_adder(circuit, qreg, N, n, control_qubits, False)
+
+    controlled_phi_adder(circuit, qreg, a, n, control_qubits, True)
+    qft_dagger(circuit, qreg, n, False)
+    circuit.x(qreg[n - 1])
+    circuit.cx(qreg[n - 1], ancilla_qubits[0])
+    circuit.x(qreg[n - 1])
+    qft(circuit, qreg, n, False)
+    controlled_phi_adder(circuit, qreg, a, n, control_qubits, False)
+
+
+def controlled_phi_adder_mod_N_inv(
+    circuit: QuantumCircuit,
+    qreg: QuantumRegister,
+    a: int,
+    N: int,
+    n: int,
+    control_qubits: list[QuantumRegister] | QuantumRegister,
+    ancilla_qubits: QuantumRegister,
+):
+    """Controlled version of the inverse phi_adder"""
+    controlled_phi_adder(circuit, qreg, a, n, control_qubits, True)
+    qft_dagger(circuit, qreg, n, False)
+    circuit.x(qreg[n - 1])
+    circuit.cx(qreg[n - 1], ancilla_qubits[0])
+    circuit.x(qreg[n - 1])
+    qft(circuit, qreg, n, False)
+    controlled_phi_adder(circuit, qreg, a, n, control_qubits, False)
+
+    controlled_phi_adder(circuit, qreg, N, n, control_qubits, False)
+    qft_dagger(circuit, qreg, n, False)
+    circuit.cx(qreg[n - 1], ancilla_qubits[0])
+    qft(circuit, qreg, n, False)
+    phi_adder(circuit, qreg, N, n, False)
+    controlled_phi_adder(circuit, qreg, a, n, control_qubits, True)
+
+
+def controller_mult_mod_N(
+    circuit: QuantumCircuit,
+    qreg: QuantumRegister,
+    a: int,
+    N: int,
+    n: int,
+    control_reg: list[QuantumRegister] | QuantumRegister,
+    ancilla_reg: QuantumRegister,
+):
+    """Controlled version of the multiplication by a mod N"""
+    qft(circuit, qreg, n, False)
+    for i in range(n):
+        controlled_phi_adder_mod_N(
+            circuit, qreg, (2**i) * a % N, N, n, control_reg, ancilla_reg
+        )
+    qft_dagger(circuit, qreg, n, False)
+
+    for i in range(n):
+        if control_reg[0] != qreg[i]:
+            circuit.cswap(control_reg[0], qreg[i], ancilla_reg[i])
+
+    a_inv = pow(a, -1, N)
+    qft(circuit, qreg, n + 1, False)
+
+    for i in range(n):
+        controlled_phi_adder_mod_N_inv(
+            circuit,
+            qreg,
+            pow(2, i) * a_inv % N,
+            N,
+            n + 1,
+            control_reg,
+            ancilla_reg,
+        )
+    qft_dagger(circuit, qreg, n, False)
+
+
+def check_power(N):
+    """Check if N is a perfect power"""
+    for i in range(2, N):
+        if N % i == 0:
+            if N % i**2 == 0:
+                print(f"{N} is a perfect power")
+                return i
+            else:
+                print(f"{N} is not a perfect power")
+                break
+
+
+def get_coprime(N):
+    """Get a random coprime of N"""
+    a = randint(2, N)
+    while gcd(a, N) != 1:
+        a = randint(2, N)
+    return a
+
+
+def qpe_period_finding(N, a, n) -> float | str:
+    """Quantum Phase Estimation for period finding"""
+    q_up = QuantumRegister(2 * n, "q_up")
+    q_down = QuantumRegister(n, "q_down")
+    a_q = QuantumRegister(n + 2, "a_q")
+    c = ClassicalRegister(2 * n, "c")
+    qpe = QuantumCircuit(q_up, q_down, a_q, c)
+    try:
+        # Initialize qubits
+        qft(qpe, q_up, 2 * n, False)
+        qpe.x(q_down[0])
+
+        # Apply controlled multiplication gates
+        for i in range(n):
+            controller_mult_mod_N(qpe, q_up, a, N, n, q_down, a_q)
+
+        # Apply inverse QFT
+        qft_dagger(qpe, q_up, n, False)
+
+        # Measure the qubits
+        qpe.measure(q_up, c)
+
+        # Transpile the circuit
+        transpiled_qpe = transpile(qpe, AerSimulator())
+
+        # Simulate the QuantumCircuit
+        result = AerSimulator().run(transpiled_qpe).result()
+        counts = result.get_counts(qpe)
+        print(counts)
+
+        # Extract the phase
+        phase = max(counts, key=counts.get)
+        phase = int(phase, 2) / 2**n
+
+        print(qpe.draw())
+
+        return phase
+    except Exception as e:
+        print(traceback.format_exc())
+        # print(qpe.draw())
+        return "Failure"
+
+
+def shor(N):
+    """Shor's algorithm"""
+    # Check if N is a perfect power
+    r = check_power(N)
+    if r:
+        return r, N // r
+
+    # Get a random coprime of N
+    a = get_coprime(N)
+
+    # Check if a is a non-trivial square root of 1
+    if pow(a, N // 2, N) == (N - 1):
+        return gcd(a + 1, N), gcd(a - 1, N)
+
+    # Find the period
+    n = int(2 * (N**0.5)).bit_length()
+    phase = qpe_period_finding(N, a, n)
+
+    print(f"The phase is {phase}")
+
+    # Check if the period is even
+    if isinstance(phase, float) and phase % 1 == 0:
+        return int((a ** (phase / 2) - 1) % N), int((a ** (phase / 2) + 1) % N)
+    else:
+        return "Failure"
 
 
 if __name__ == "__main__":

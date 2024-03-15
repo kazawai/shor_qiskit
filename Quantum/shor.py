@@ -3,19 +3,22 @@ RSA and Shor's algorithm.
 Based on past Qiskit implementation : https://github.com/ttlion/ShorAlgQiskit/blob/master/Shor_Normal_QFT.py
 """
 
-import array
 import fractions
 import traceback
 # Time the execution of the algorithm
 from time import time
 
 from numpy import ceil, floor, gcd, log2, pi, zeros
-from numpy.random import randint, seed
+from numpy.random import randint
 # For shor's algorithm in qiskit version 1.0.1
 from qiskit import (ClassicalRegister, QuantumCircuit, QuantumRegister,
                     transpile)
 from qiskit.circuit.quantumcircuit import Qubit, QubitSpecifier
 from qiskit_aer import AerSimulator
+
+#####################
+#   RSA algorithm   #
+#####################
 
 
 def rsa(P, Q):
@@ -343,7 +346,11 @@ def qpe_period_finding(N, a, n) -> int | str:
         qpe.measure(q_up, c)
 
         # Transpile the circuit
-        transpiled_qpe = transpile(qpe, AerSimulator())
+        try:
+            transpiled_qpe = transpile(qpe, AerSimulator())
+        except Exception as e:
+            print(traceback.format_exc())
+            return "Error"
 
         # Simulate the QuantumCircuit
         result = AerSimulator().run(transpiled_qpe, shots=1024, memory=True).result()
@@ -360,7 +367,7 @@ def qpe_period_finding(N, a, n) -> int | str:
     except Exception as e:
         print(traceback.format_exc())
         # print(qpe.draw())
-        return "Failure"
+        return "Error"
 
 
 def shor(N):
@@ -386,7 +393,16 @@ def shor(N):
     while not FACTOR_FOUND:
         ATTEMPT += 1
         print(f"\nATTEMPT {ATTEMPT}:")
+        # Update a for each attempt
+        a = randint(2, N)
+        if gcd(a, N) != 1:
+            print(f"Lucky guess: {gcd(a, N)} is a factor of {N}")
+            return (gcd(a, N), N // gcd(a, N))
+
         r = qpe_period_finding(N, a, n)
+        if r == "Error":
+            print("Error")
+            return 0, 0
         print(f"Result: r = {r}")
         if r != 0:
             # Guesses for factors are gcd(x^{r/2} ±1 , 15)

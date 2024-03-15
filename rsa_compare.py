@@ -1,9 +1,11 @@
 from time import time
 
 from matplotlib import pyplot as plt
-
 from rsa_brute_force import classical_brute_force
 from rsa_shor import shor
+
+if __name__ == "__main__":
+    raise Exception("This file is currently not meant to be run as a script")
 
 # Run the algorithm for different values of N
 primes = [631, 641, 2297, 2309, 4001, 4003, 10007, 10009, 11939, 19391]

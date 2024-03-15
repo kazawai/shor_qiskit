@@ -1,0 +1,6 @@
+# All images
+*.png
+# Python
+.venv/
+__pycache__/
+*.pyc
